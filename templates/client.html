@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebRTC-TextChat</title>
+</head>
+<body>
+    <div id="chat"></div>
+    <textarea name="message" id="inp_message" rows="10" cols="50"></textarea>
+    <input type="submit" id="send" value="Send" disabled>
+    
+    <script src="../static/js/jquery-3.6.0.min.js"></script>
+    <script src="../static/js/socket.io.js"></script>
+    <script>
+        $(document).ready(function(){
+
+            const chat = document.getElementById('chat');
+            const inp_message = document.getElementById('inp_message');
+            var btn = document.getElementById('send');
+
+            let socket = io({autoConnect: false});
+            socket.connect();
+            var mySid = "";
+			let pc, dc;
+			const PC_CONFIG = {
+				iceServers: [    
+					{
+						urls: 'stun:stun.l.google.com:19302'
+					}
+				]
+			};
+
+            const optionalRtpDataChannels = {
+                optional: [
+                    {
+                        RtpDataChannels: false
+                    }
+                ]
+            };
+
+			socket.on('connect', function () {
+				console.log("Connected to server!");
+			});
+
+            socket.on('sid', function(sid) {
+                mySid = "[" + sid + "]: ";
+            });
+
+			socket.on('disconnect', function () {
+                dc.close()
+                dc = null;
+                pc.close();
+                pc = null;
+				socket.disconnect();
+				console.log("Disconnected to server!");
+			});
+			
+			socket.on('ready', () => {
+				console.log("Ready");
+				createPeerConnection();
+                console.log(pc);
+                dc = pc.createDataChannel('channel');
+                dc.onopen = onOpen;
+                dc.onmessage = onMessage;
+				sendOffer();
+			});
+
+			socket.on('data', (data) => {
+				console.log('Data received: ',data);
+				handleSignalingData(data);
+			});
+
+            btn.onclick = () => {
+                console.log('Sending message');
+                dc.send(mySid + inp_message.value);
+                created_p_tag = document.createElement('p');
+                created_p_tag.innerText = mySid + inp_message.value;
+                chat.appendChild(created_p_tag);
+                inp_message.value = "";
+            }
+
+			let sendData = (data) => {
+				socket.emit('data', data);
+			}
+
+			let createPeerConnection = () => {
+				try
+				{
+					pc = new RTCPeerConnection(PC_CONFIG, optionalRtpDataChannels);
+					pc.onicecandidate = onIceCandidate;
+					pc.oniceconnectionstatechange = stateHandler;
+					console.log('PeerConnection created');
+				} catch (error) {
+					console.error('PeerConnection failed: ', error);
+				}
+			}
+
+            let onOpen = () => {
+                console.log("Data channel opened");
+                btn.disabled = false;
+            };
+
+            let onMessage = (event) => {
+                console.log("Message Recieved:" + event);
+                created_p_tag = document.createElement('p');
+                created_p_tag.innerText = event.data;
+                chat.appendChild(created_p_tag);
+            };
+
+			let onIceCandidate = (event) => {
+				if (event.candidate) {
+					console.log('Sending ICE candidate');
+					sendData({
+					type: 'candidate',
+					candidate: event.candidate
+					});
+				}
+			}
+
+			let sendOffer = () => {
+				console.log('Send offer');
+				pc.createOffer().then(
+					setAndSendLocalDescription,
+					(error) => { console.error('Send offer failed: ', error); }
+				);
+			}
+
+			let sendAnswer = () => {
+				console.log('Send answer');
+				pc.createAnswer().then(
+					setAndSendLocalDescription,
+					(error) => { console.error('Send answer failed: ', error); }
+				);
+			}
+
+			let setAndSendLocalDescription = (sessionDescription) => {
+				pc.setLocalDescription(sessionDescription);
+				console.log('Local description set');
+				sendData(sessionDescription);
+			}
+
+			let stateHandler = () => {
+				if(pc.iceConnectionState == 'disconnected')
+				{
+					console.log('Peer disconnected');
+					pc.close();
+                    pc = null;
+				}
+			}
+
+			let handleSignalingData = (data) => {
+				switch (data.type)
+				{
+					case 'offer':
+						createPeerConnection();
+						pc.setRemoteDescription(new RTCSessionDescription(data));
+						sendAnswer();
+                        pc.ondatachannel = (event) => {
+                            dc = event.channel;
+                            dc.onopen = onOpen;
+                            dc.onmessage = onMessage;
+                        };
+
+						break;
+					case 'answer':
+						pc.setRemoteDescription(new RTCSessionDescription(data));
+						break;
+					case 'candidate':
+						pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+						break;
+				}
+			}
+        });
+
+    </script>
+
+</body>
+</html>
